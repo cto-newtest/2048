@@ -1,0 +1,18 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Node (if added later)
+node_modules/
+.npm/
+.pnpm-store/
+.yarn/
+
+# Build output (if added later)
+dist/
+build/
+
+# Logs
+*.log

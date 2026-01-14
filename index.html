@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#faf8ef" />
+    <title>2028</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app" aria-label="Игра 2028">
+      <header class="top">
+        <div class="title-wrap">
+          <h1 class="title">2028</h1>
+          <p class="subtitle">Соединяй плитки, чтобы получить <strong>2028</strong>.</p>
+        </div>
+
+        <div class="scores" aria-label="Счёт">
+          <div class="score-box" aria-label="Текущий счёт">
+            <div class="score-label">СЧЁТ</div>
+            <div id="score" class="score-value">0</div>
+          </div>
+          <div class="score-box" aria-label="Лучший счёт">
+            <div class="score-label">ЛУЧШИЙ</div>
+            <div id="best" class="score-value">0</div>
+          </div>
+        </div>
+      </header>
+
+      <section class="actions">
+        <button id="newGame" class="btn" type="button">Новая игра</button>
+        <div id="status" class="status" role="status" aria-live="polite"></div>
+      </section>
+
+      <section class="board-wrap">
+        <div id="board" class="board" role="application" aria-label="Поле 4 на 4"></div>
+      </section>
+
+      <section class="controls" aria-label="Управление">
+        <div class="hint">
+          Свайпы: вверх(вперёд)/вниз(назад)/влево/вправо • Кнопки: стрелки • Клавиатура: ← ↑ → ↓
+        </div>
+
+        <div class="dpad" aria-label="Кнопки-стрелки">
+          <button class="dpad-btn up" data-dir="up" type="button" aria-label="Вперёд (вверх)">▲</button>
+          <button class="dpad-btn left" data-dir="left" type="button" aria-label="Влево">◀</button>
+          <button class="dpad-btn down" data-dir="down" type="button" aria-label="Назад (вниз)">▼</button>
+          <button class="dpad-btn right" data-dir="right" type="button" aria-label="Вправо">▶</button>
+        </div>
+      </section>
+    </main>
+
+    <script src="game.js"></script>
+  </body>
+</html>
