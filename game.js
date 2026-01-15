@@ -2,6 +2,9 @@
   const SIZE = 4;
   const TARGET = 2028;
 
+  const MOVE_MS = 120;
+  const KNOWN_TILE_VALUES = new Set([0, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2028]);
+
   const byId = (id) => {
     const el = document.getElementById(id);
     if (!el) throw new Error(`Missing element #${id}`);
@@ -25,33 +28,46 @@
         startT: 0,
       };
 
-      this._raf = null;
+      this._resizeRaf = null;
+      this._pendingRaf = null;
+      this._metrics = { gap: 12, cell: 0 };
+
+      this.animating = false;
+      this.nextId = 1;
+      this._moveToken = 0;
 
       this._buildGrid();
       this._bind();
+      this._measure();
       this.reset();
     }
 
     _buildGrid() {
       this.boardEl.innerHTML = "";
-      this.cells = [];
+
+      const gridLayer = document.createElement("div");
+      gridLayer.className = "grid-layer";
 
       for (let i = 0; i < SIZE * SIZE; i += 1) {
         const cell = document.createElement("div");
         cell.className = "cell";
-
-        const tile = document.createElement("div");
-        tile.className = "tile";
-        tile.textContent = "";
-        cell.appendChild(tile);
-
-        this.boardEl.appendChild(cell);
-        this.cells.push({ cell, tile });
+        gridLayer.appendChild(cell);
       }
+
+      const tileContainer = document.createElement("div");
+      tileContainer.className = "tile-container";
+
+      this.boardEl.appendChild(gridLayer);
+      this.boardEl.appendChild(tileContainer);
+
+      this.gridLayerEl = gridLayer;
+      this.tileContainerEl = tileContainer;
     }
 
     _bind() {
       this.newGameBtn.addEventListener("click", () => this.reset());
+
+      window.addEventListener("resize", () => this._onResize(), { passive: true });
 
       document.addEventListener("keydown", (e) => {
         const dir = this._dirFromKey(e);
@@ -107,7 +123,6 @@
           const absX = Math.abs(dx);
           const absY = Math.abs(dy);
 
-          // Slightly forgiving threshold for phones.
           const minDistance = 24;
           const maxDuration = 700;
 
@@ -120,7 +135,6 @@
         { passive: true }
       );
 
-      // Prevent double-tap zoom over the game on mobile.
       this.boardEl.addEventListener(
         "dblclick",
         (e) => {
@@ -128,6 +142,28 @@
         },
         { passive: false }
       );
+    }
+
+    _onResize() {
+      if (this._resizeRaf) cancelAnimationFrame(this._resizeRaf);
+      this._resizeRaf = requestAnimationFrame(() => {
+        this._measure();
+        this._repositionAllTiles();
+      });
+    }
+
+    _measure() {
+      const boardRect = this.boardEl.getBoundingClientRect();
+      const style = getComputedStyle(this.boardEl);
+      const gap = Number.parseFloat(style.paddingLeft) || 12;
+
+      const size = boardRect.width;
+      const inner = size - 2 * gap;
+      const cell = (inner - (SIZE - 1) * gap) / SIZE;
+
+      this._metrics = { gap, cell };
+      this.boardEl.style.setProperty("--cell-size", `${cell}px`);
+      this.boardEl.style.setProperty("--move-ms", `${MOVE_MS}ms`);
     }
 
     _dirFromKey(e) {
@@ -154,201 +190,363 @@
     }
 
     reset() {
-      this.grid = Array.from({ length: SIZE }, () => Array.from({ length: SIZE }, () => 0));
+      this.grid = Array.from({ length: SIZE }, () => Array.from({ length: SIZE }, () => null));
+      this.tiles = new Map();
+      this.tileContainerEl.innerHTML = "";
+      this.nextId = 1;
+
       this.score = 0;
       this.won = false;
       this.over = false;
+      this.animating = false;
+      this._moveToken += 1;
 
       this.best = this._loadBest();
       this._setStatus("");
+      this._updateHUD();
 
-      this._addRandomTile();
-      this._addRandomTile();
-      this._render();
+      this._addRandomTile(true);
+      this._addRandomTile(true);
     }
 
     move(dir) {
-      if (this.over) return;
+      if (this.over || this.animating) return;
 
-      const before = this._serializeGrid(this.grid);
+      const result = this._computeMove(dir);
+      if (!result.moved) return;
+
+      this.animating = true;
+      const token = this._moveToken + 1;
+      this._moveToken = token;
+
+      const oldPositions = new Map();
+      this.tiles.forEach((t, id) => {
+        oldPositions.set(id, { row: t.row, col: t.col });
+      });
+
+      this.grid = result.newGrid;
+
+      result.positions.forEach((pos, id) => {
+        const t = this.tiles.get(id);
+        if (!t) return;
+        t.row = pos.row;
+        t.col = pos.col;
+      });
+
+      const movingEls = [];
+
+      result.positions.forEach((pos, id) => {
+        const prev = oldPositions.get(id);
+        if (!prev) return;
+        if (prev.row === pos.row && prev.col === pos.col) return;
+        const t = this.tiles.get(id);
+        if (!t) return;
+        movingEls.push(t.el);
+      });
+
+      for (const m of result.merges) {
+        const removed = this.tiles.get(m.removedId);
+        if (!removed) continue;
+
+        const prev = oldPositions.get(m.removedId);
+        if (!prev || prev.row !== m.to.row || prev.col !== m.to.col) {
+          movingEls.push(removed.el);
+        }
+
+        removed.row = m.to.row;
+        removed.col = m.to.col;
+      }
+
+      this._applyTransforms();
+
+      this._waitForTransforms(movingEls).then(() => {
+        if (token !== this._moveToken) return;
+
+        for (const m of result.merges) {
+          const survivor = this.tiles.get(m.survivorId);
+          const removed = this.tiles.get(m.removedId);
+
+          if (removed) {
+            removed.el.remove();
+            this.tiles.delete(m.removedId);
+          }
+
+          if (survivor) {
+            survivor.value = m.newValue;
+            this._updateTileAppearance(survivor);
+            this._playTileAnim(survivor.el, "merged");
+          }
+        }
+
+        this.score += result.scoreGained;
+        this.best = Math.max(this.best, this.score);
+        this._saveBest(this.best);
+
+        this._updateHUD();
+
+        this._addRandomTile(true);
+
+        if (!this.won && this._hasValueAtLeast(TARGET)) {
+          this.won = true;
+          this._setStatus(`Победа! Есть плитка ${TARGET}. Можно продолжать.`);
+        }
+
+        if (!this._hasMoves()) {
+          this.over = true;
+          this._setStatus("Ходов больше нет. Игра окончена.");
+        }
+
+        this.animating = false;
+      });
+    }
+
+    _computeMove(dir) {
+      const newGrid = Array.from({ length: SIZE }, () => Array.from({ length: SIZE }, () => null));
+      const positions = new Map();
+      const merges = [];
 
       let moved = false;
-      let gained = 0;
-
-      const applyLine = (line) => {
-        const { next, scoreGained } = this._collapseLine(line);
-        gained += scoreGained;
-        if (!this._arraysEqual(line, next)) moved = true;
-        return next;
-      };
-
-      if (dir === "left") {
-        for (let r = 0; r < SIZE; r += 1) this.grid[r] = applyLine(this.grid[r]);
-      } else if (dir === "right") {
-        for (let r = 0; r < SIZE; r += 1) {
-          const reversed = [...this.grid[r]].reverse();
-          const next = applyLine(reversed).reverse();
-          this.grid[r] = next;
-        }
-      } else if (dir === "up") {
-        for (let c = 0; c < SIZE; c += 1) {
-          const col = [];
-          for (let r = 0; r < SIZE; r += 1) col.push(this.grid[r][c]);
-          const next = applyLine(col);
-          for (let r = 0; r < SIZE; r += 1) this.grid[r][c] = next[r];
-        }
-      } else if (dir === "down") {
-        for (let c = 0; c < SIZE; c += 1) {
-          const col = [];
-          for (let r = 0; r < SIZE; r += 1) col.push(this.grid[r][c]);
-          const reversed = col.reverse();
-          const next = applyLine(reversed).reverse();
-          for (let r = 0; r < SIZE; r += 1) this.grid[r][c] = next[r];
-        }
-      } else {
-        return;
-      }
-
-      const after = this._serializeGrid(this.grid);
-      if (!moved || before === after) return;
-
-      this.score += gained;
-      this.best = Math.max(this.best, this.score);
-      this._saveBest(this.best);
-
-      this._addRandomTile();
-
-      if (!this.won && this._hasValueAtLeast(TARGET)) {
-        this.won = true;
-        this._setStatus(`Победа! Есть плитка ${TARGET}. Можно продолжать.`);
-      }
-
-      if (!this._hasMoves()) {
-        this.over = true;
-        this._setStatus("Ходов больше нет. Игра окончена.");
-      }
-
-      this._render();
-    }
-
-    _collapseLine(line) {
-      const filtered = line.filter((v) => v !== 0);
-      const next = [];
       let scoreGained = 0;
 
-      for (let i = 0; i < filtered.length; i += 1) {
-        const v = filtered[i];
-        const n = filtered[i + 1];
-        if (n !== undefined && n === v) {
-          const merged = v + n;
-          next.push(merged);
-          scoreGained += merged;
-          i += 1;
+      const coordsForLine = (index) => {
+        const coords = [];
+
+        if (dir === "left" || dir === "right") {
+          const r = index;
+          for (let c = 0; c < SIZE; c += 1) coords.push([r, c]);
+          if (dir === "right") coords.reverse();
         } else {
-          next.push(v);
+          const c = index;
+          for (let r = 0; r < SIZE; r += 1) coords.push([r, c]);
+          if (dir === "down") coords.reverse();
+        }
+
+        return coords;
+      };
+
+      for (let line = 0; line < SIZE; line += 1) {
+        const coords = coordsForLine(line);
+        const ids = coords.map(([r, c]) => this.grid[r][c]).filter((x) => x != null);
+
+        const out = Array.from({ length: SIZE }, () => null);
+        let outIndex = 0;
+
+        for (let i = 0; i < ids.length; i += 1) {
+          const aId = ids[i];
+          const a = aId != null ? this.tiles.get(aId) : null;
+          const bId = ids[i + 1];
+          const b = bId != null ? this.tiles.get(bId) : null;
+
+          if (a && b && a.value === b.value) {
+            out[outIndex] = aId;
+            const [tr, tc] = coords[outIndex];
+            merges.push({ survivorId: aId, removedId: bId, to: { row: tr, col: tc }, newValue: a.value + b.value });
+            scoreGained += a.value + b.value;
+            i += 1;
+          } else {
+            out[outIndex] = aId;
+          }
+
+          outIndex += 1;
+        }
+
+        for (let idx = 0; idx < SIZE; idx += 1) {
+          const id = out[idx];
+          if (id == null) continue;
+          const [r, c] = coords[idx];
+          newGrid[r][c] = id;
+          positions.set(id, { row: r, col: c });
         }
       }
 
-      while (next.length < SIZE) next.push(0);
+      positions.forEach((pos, id) => {
+        const t = this.tiles.get(id);
+        if (!t) return;
+        if (t.row !== pos.row || t.col !== pos.col) moved = true;
+      });
 
-      return { next, scoreGained };
+      if (merges.length > 0) moved = true;
+
+      return { moved, newGrid, positions, merges, scoreGained };
     }
 
-    _addRandomTile() {
+    _applyTransforms() {
+      if (this._pendingRaf) cancelAnimationFrame(this._pendingRaf);
+      this._pendingRaf = requestAnimationFrame(() => {
+        this.tiles.forEach((t) => {
+          const { x, y } = this._cellToPixels(t.row, t.col);
+          t.el.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+        });
+      });
+    }
+
+    _repositionAllTiles() {
+      const tiles = Array.from(this.tiles.values());
+      if (tiles.length === 0) return;
+
+      for (const t of tiles) t.el.style.transition = "none";
+
+      requestAnimationFrame(() => {
+        for (const t of tiles) {
+          const { x, y } = this._cellToPixels(t.row, t.col);
+          t.el.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+        }
+
+        requestAnimationFrame(() => {
+          for (const t of tiles) t.el.style.transition = "";
+        });
+      });
+    }
+
+    _waitForTransforms(els) {
+      return new Promise((resolve) => {
+        const unique = Array.from(new Set(els));
+        if (unique.length === 0) {
+          resolve();
+          return;
+        }
+
+        let done = 0;
+        let finished = false;
+
+        const finish = () => {
+          if (finished) return;
+          finished = true;
+          resolve();
+        };
+
+        const timeout = setTimeout(finish, MOVE_MS + 80);
+
+        unique.forEach((el) => {
+          const onEnd = (e) => {
+            if (e.propertyName !== "transform") return;
+            el.removeEventListener("transitionend", onEnd);
+            done += 1;
+            if (done === unique.length) {
+              clearTimeout(timeout);
+              finish();
+            }
+          };
+          el.addEventListener("transitionend", onEnd);
+        });
+      });
+    }
+
+    _addRandomTile(isNew = false) {
       const empties = [];
       for (let r = 0; r < SIZE; r += 1) {
         for (let c = 0; c < SIZE; c += 1) {
-          if (this.grid[r][c] === 0) empties.push([r, c]);
+          if (this.grid[r][c] == null) empties.push([r, c]);
         }
       }
+
       if (empties.length === 0) return;
 
       const [r, c] = empties[Math.floor(Math.random() * empties.length)];
-      this.grid[r][c] = Math.random() < 0.9 ? 2 : 4;
+      const value = Math.random() < 0.9 ? 2 : 4;
+      this._spawnTile(r, c, value, { isNew });
+    }
+
+    _spawnTile(row, col, value, { isNew }) {
+      const id = this.nextId;
+      this.nextId += 1;
+
+      const el = document.createElement("div");
+      el.className = `tile v${value}`;
+      el.dataset.id = String(id);
+
+      const inner = document.createElement("div");
+      inner.className = "tile-inner";
+      inner.textContent = String(value);
+      el.appendChild(inner);
+
+      const tile = { id, value, row, col, el, inner };
+      this.tiles.set(id, tile);
+      this.grid[row][col] = id;
+
+      this._updateTileAppearance(tile);
+
+      const { x, y } = this._cellToPixels(row, col);
+      el.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+
+      this.tileContainerEl.appendChild(el);
+
+      if (isNew) this._playTileAnim(el, "new");
+
+      return tile;
+    }
+
+    _updateTileAppearance(tile) {
+      tile.el.classList.remove(...Array.from(tile.el.classList).filter((c) => c.startsWith("v")));
+      tile.el.classList.add(`v${tile.value}`);
+
+      tile.inner.textContent = String(tile.value);
+      tile.inner.style.background = this._tileColor(tile.value);
+    }
+
+    _playTileAnim(tileEl, name) {
+      tileEl.classList.remove(name);
+      void tileEl.offsetWidth;
+      tileEl.classList.add(name);
+
+      const inner = tileEl.querySelector(".tile-inner");
+      const onEnd = () => {
+        tileEl.classList.remove(name);
+        inner?.removeEventListener("animationend", onEnd);
+      };
+
+      inner?.addEventListener("animationend", onEnd);
+    }
+
+    _cellToPixels(row, col) {
+      const { gap, cell } = this._metrics;
+      return {
+        x: col * (cell + gap),
+        y: row * (cell + gap),
+      };
+    }
+
+    _tileColor(value) {
+      if (value === 0) return "var(--tile-0)";
+      if (KNOWN_TILE_VALUES.has(value)) return `var(--tile-${value})`;
+      return "#3c3a32";
     }
 
     _hasMoves() {
       for (let r = 0; r < SIZE; r += 1) {
         for (let c = 0; c < SIZE; c += 1) {
-          const v = this.grid[r][c];
-          if (v === 0) return true;
+          const id = this.grid[r][c];
+          if (id == null) return true;
+          const t = this.tiles.get(id);
+          if (!t) continue;
 
-          const right = c + 1 < SIZE ? this.grid[r][c + 1] : null;
-          const down = r + 1 < SIZE ? this.grid[r + 1][c] : null;
-          if (right === v || down === v) return true;
+          const rightId = c + 1 < SIZE ? this.grid[r][c + 1] : null;
+          const downId = r + 1 < SIZE ? this.grid[r + 1][c] : null;
+
+          const right = rightId != null ? this.tiles.get(rightId) : null;
+          const down = downId != null ? this.tiles.get(downId) : null;
+
+          if ((right && right.value === t.value) || (down && down.value === t.value)) return true;
         }
       }
       return false;
     }
 
     _hasValueAtLeast(x) {
-      for (let r = 0; r < SIZE; r += 1) {
-        for (let c = 0; c < SIZE; c += 1) {
-          if (this.grid[r][c] >= x) return true;
-        }
+      for (const t of this.tiles.values()) {
+        if (t.value >= x) return true;
       }
       return false;
     }
 
-    _render() {
-      if (this._raf) cancelAnimationFrame(this._raf);
-      this._raf = requestAnimationFrame(() => {
-        // Animate score updates
-        if (this.scoreEl.textContent !== String(this.score)) {
-          this.scoreEl.classList.add('updating');
-          this.scoreEl.textContent = String(this.score);
-          setTimeout(() => this.scoreEl.classList.remove('updating'), 250);
-        }
-        
-        this.bestEl.textContent = String(this.best);
+    _updateHUD() {
+      if (this.scoreEl.textContent !== String(this.score)) {
+        this.scoreEl.classList.add("updating");
+        this.scoreEl.textContent = String(this.score);
+        setTimeout(() => this.scoreEl.classList.remove("updating"), 250);
+      }
 
-        for (let r = 0; r < SIZE; r += 1) {
-          for (let c = 0; c < SIZE; c += 1) {
-            const idx = r * SIZE + c;
-            const v = this.grid[r][c];
-            const { tile } = this.cells[idx];
-
-            const prevValue = tile.textContent;
-            const newValue = v === 0 ? "" : String(v);
-            
-            // Check if this tile is being updated
-            const isNew = prevValue === "" && newValue !== "";
-            const isMerge = prevValue !== "" && newValue !== "" && prevValue !== newValue;
-            
-            tile.textContent = newValue;
-            tile.style.background = this._tileColor(v);
-            
-            let className = `tile ${v === 0 ? "" : `v${v}`}`.trim();
-            
-            if (isNew) {
-              className += ' new';
-            } else if (isMerge) {
-              className += ' merged';
-            }
-            
-            tile.className = className;
-          }
-        }
-      });
-    }
-
-    _tileColor(value) {
-      if (value === 0) return "var(--tile-0)";
-      const key = `--tile-${value}`;
-      const style = getComputedStyle(document.documentElement);
-      const v = style.getPropertyValue(key);
-      if (v && v.trim()) return `var(${key})`;
-      return "#3c3a32";
-    }
-
-    _arraysEqual(a, b) {
-      if (a.length !== b.length) return false;
-      for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return false;
-      return true;
-    }
-
-    _serializeGrid(grid) {
-      return grid.map((row) => row.join(",")).join(";");
+      this.bestEl.textContent = String(this.best);
     }
 
     _setStatus(msg) {
