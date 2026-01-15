@@ -293,7 +293,13 @@
     _render() {
       if (this._raf) cancelAnimationFrame(this._raf);
       this._raf = requestAnimationFrame(() => {
-        this.scoreEl.textContent = String(this.score);
+        // Animate score updates
+        if (this.scoreEl.textContent !== String(this.score)) {
+          this.scoreEl.classList.add('updating');
+          this.scoreEl.textContent = String(this.score);
+          setTimeout(() => this.scoreEl.classList.remove('updating'), 250);
+        }
+        
         this.bestEl.textContent = String(this.best);
 
         for (let r = 0; r < SIZE; r += 1) {
@@ -302,9 +308,25 @@
             const v = this.grid[r][c];
             const { tile } = this.cells[idx];
 
-            tile.textContent = v === 0 ? "" : String(v);
+            const prevValue = tile.textContent;
+            const newValue = v === 0 ? "" : String(v);
+            
+            // Check if this tile is being updated
+            const isNew = prevValue === "" && newValue !== "";
+            const isMerge = prevValue !== "" && newValue !== "" && prevValue !== newValue;
+            
+            tile.textContent = newValue;
             tile.style.background = this._tileColor(v);
-            tile.className = `tile ${v === 0 ? "" : `v${v}`}`.trim();
+            
+            let className = `tile ${v === 0 ? "" : `v${v}`}`.trim();
+            
+            if (isNew) {
+              className += ' new';
+            } else if (isMerge) {
+              className += ' merged';
+            }
+            
+            tile.className = className;
           }
         }
       });

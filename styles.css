@@ -19,6 +19,9 @@
   --tile-2028: #edc22e;
 
   --shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  --transition-fast: 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-medium: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 * {
@@ -79,6 +82,13 @@ body {
   padding: 10px 12px;
   min-width: 92px;
   text-align: center;
+  transition: transform var(--transition-fast),
+              box-shadow var(--transition-fast);
+}
+
+.score-box:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
 .score-label {
@@ -91,6 +101,12 @@ body {
   font-weight: 800;
   font-size: 20px;
   margin-top: 2px;
+  transition: transform var(--transition-medium);
+}
+
+.score-value.updating {
+  transform: scale(1.15);
+  color: #f9e4c5;
 }
 
 .actions {
@@ -109,10 +125,39 @@ body {
   padding: 10px 14px;
   font-weight: 700;
   font-size: 14px;
+  transition: all var(--transition-fast);
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+
+.btn::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  transform: translate(-50%, -50%);
+  transition: width var(--transition-slow), height var(--transition-slow);
+}
+
+.btn:active::before {
+  width: 300px;
+  height: 300px;
+}
+
+.btn:hover {
+  background: #7f6a56;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
 .btn:active {
   transform: translateY(1px);
+  transition: transform var(--transition-fast);
 }
 
 .status {
@@ -139,6 +184,19 @@ body {
   grid-template-columns: repeat(4, 1fr);
   grid-template-rows: repeat(4, 1fr);
   gap: var(--gap);
+
+  animation: boardPulse var(--transition-slow) ease-out;
+}
+
+@keyframes boardPulse {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .cell {
@@ -158,6 +216,58 @@ body {
   font-weight: 800;
   font-size: clamp(22px, 5vw, 42px);
   color: #776e65;
+
+  transition: all var(--transition-medium);
+  animation: tileAppear var(--transition-medium) ease-out;
+  position: relative;
+  z-index: 1;
+}
+
+.tile.new {
+  animation: tilePop var(--transition-medium) cubic-bezier(0.68, -0.55, 0.265, 1.55);
+}
+
+.tile.merged {
+  animation: tileMerge var(--transition-medium) ease-out;
+  z-index: 2;
+}
+
+@keyframes tileAppear {
+  from {
+    opacity: 0;
+    transform: scale(0);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes tilePop {
+  0% {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+  50% {
+    transform: scale(1.1);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes tileMerge {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.2);
+    box-shadow: 0 0 20px rgba(255, 255, 255, 0.6);
+  }
+  100% {
+    transform: scale(1);
+  }
 }
 
 .tile.v8,
@@ -208,10 +318,39 @@ body {
   width: 52px;
   height: 52px;
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+  transition: all var(--transition-fast);
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+
+.dpad-btn::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.3);
+  transform: translate(-50%, -50%);
+  transition: width var(--transition-medium), height var(--transition-medium);
+}
+
+.dpad-btn:active::before {
+  width: 100px;
+  height: 100px;
+}
+
+.dpad-btn:hover {
+  background: #7f6a56;
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
 }
 
 .dpad-btn:active {
-  transform: translateY(1px);
+  transform: translateY(1px) scale(0.95);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.15);
 }
 
 .dpad-btn.up {
