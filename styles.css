@@ -22,6 +22,9 @@
   --transition-fast: 0.15s cubic-bezier(0.4, 0, 0.2, 1);
   --transition-medium: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   --transition-slow: 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+
+  --cell-size: 0px;
+  --move-ms: 120ms;
 }
 
 * {
@@ -179,13 +182,25 @@ body {
   padding: var(--gap);
   box-shadow: var(--shadow);
   touch-action: none;
+  position: relative;
 
+  animation: boardPulse var(--transition-slow) ease-out;
+}
+
+.grid-layer {
+  width: 100%;
+  height: 100%;
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   grid-template-rows: repeat(4, 1fr);
   gap: var(--gap);
+}
 
-  animation: boardPulse var(--transition-slow) ease-out;
+.tile-container {
+  position: absolute;
+  inset: var(--gap);
+  pointer-events: none;
+  contain: layout paint;
 }
 
 @keyframes boardPulse {
@@ -207,6 +222,16 @@ body {
 }
 
 .tile {
+  position: absolute;
+  width: var(--cell-size);
+  height: var(--cell-size);
+  transform: translate3d(0, 0, 0);
+  will-change: transform;
+  transition: transform var(--move-ms) cubic-bezier(0.2, 0, 0, 1);
+  z-index: 1;
+}
+
+.tile-inner {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -216,31 +241,21 @@ body {
   font-weight: 800;
   font-size: clamp(22px, 5vw, 42px);
   color: #776e65;
-
-  transition: all var(--transition-medium);
-  animation: tileAppear var(--transition-medium) ease-out;
-  position: relative;
-  z-index: 1;
+  background: var(--tile-0);
+  backface-visibility: hidden;
+  transform: translateZ(0);
 }
 
-.tile.new {
+.tile.new .tile-inner {
   animation: tilePop var(--transition-medium) cubic-bezier(0.68, -0.55, 0.265, 1.55);
 }
 
 .tile.merged {
-  animation: tileMerge var(--transition-medium) ease-out;
   z-index: 2;
 }
 
-@keyframes tileAppear {
-  from {
-    opacity: 0;
-    transform: scale(0);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
+.tile.merged .tile-inner {
+  animation: tileMerge var(--transition-medium) ease-out;
 }
 
 @keyframes tilePop {
@@ -270,18 +285,18 @@ body {
   }
 }
 
-.tile.v8,
-.tile.v16,
-.tile.v32,
-.tile.v64 {
+.tile.v8 .tile-inner,
+.tile.v16 .tile-inner,
+.tile.v32 .tile-inner,
+.tile.v64 .tile-inner {
   color: #f9f6f2;
 }
 
-.tile.v128,
-.tile.v256,
-.tile.v512,
-.tile.v1024,
-.tile.v2028 {
+.tile.v128 .tile-inner,
+.tile.v256 .tile-inner,
+.tile.v512 .tile-inner,
+.tile.v1024 .tile-inner,
+.tile.v2028 .tile-inner {
   color: #f9f6f2;
   font-size: clamp(18px, 4.2vw, 34px);
 }
